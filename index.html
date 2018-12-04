@@ -1,0 +1,261 @@
+
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+  <title>U.S. Drought by County</title>
+</head>
+<body>
+<style>
+
+  html, * {
+    font-family: sans-serif;
+  }
+
+  h1, h3 {
+    text-align: center;
+  }
+
+  h3 {
+    font-weight: normal;
+    color: #999;
+  }
+
+  .title {
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    margin: 4px 0px;
+  }
+
+  .data-source {
+    text-align: center;
+    color: #999;
+    font-size: 0.7em;
+    margin: 0;
+  }
+
+  .data-source a {
+    text-decoration: none;
+    color: #999;
+  }
+
+  .data-source a:hover, .data-source a:focus {
+    text-decoration: underline;
+  }
+
+  .map-wrapper {
+    margin: auto;
+    max-width: 900px;
+  }
+
+  .legend {
+    float: right;
+    font-size: 0.5rem;
+  }
+
+  .legend-label {
+    display: block;
+  }
+
+  .counties, .states {
+    fill: none;
+    stroke: #fff;
+  }
+
+  .counties {
+    stroke-width: 0.4px;
+  }
+
+  .states {
+    stroke-linejoin: round;
+    stroke-width: 1.5px;
+  }
+
+  div.tooltip {
+    background: #fff;
+    border-radius: 5px;
+    font-size: 0.7rem;
+    opacity: 0;
+    padding: 2px;
+    position: absolute;
+    text-align: center;
+    width: 120px;
+  }
+
+</style>
+<h1 class='title'>United States Drought by County</h1>
+<h3 class='subtitle'>Sept 27, 2016 - Oct 3, 2016</h3>
+<p class='data-source'>Source: <a href="https://droughtmonitor.unl.edu/">United States Drought Monitor</a></p>
+<div class='map-wrapper'></div>
+<script src="js/d3.v4.min.js"></script>
+<script src="js/topojson.v1.min.js"></script>
+<script>
+
+(function() {
+
+var logDsciById = d3.map(),
+    dataById = d3.map();
+
+d3.queue()
+  .defer(d3.json, "js/us.json")
+  .defer(d3.tsv, "tsv/drought.tsv", function(d) {
+    dataById.set(d.FIPS, d);
+    logDsciById.set(d.FIPS, logDsci(d));
+  })
+  .await(ready);
+
+var map = d3.select('.map-wrapper')
+      .append('div')
+      .attr('class', 'map');
+
+function ready(error, us) {
+  if (error) throw error;
+
+  initMap(map, us);
+
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    // resize timer keeps initMap function from running on each resize
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() {initMap(map, us);}, 200);
+  });
+}
+
+function initMap(map, us) {
+  // clear map of previous children
+  map.selectAll("*").remove();
+
+  // get current map dimensions
+  var width = map.node().getBoundingClientRect().width,
+      height = width * 0.6;
+
+  var logColor = d3.scaleLog()
+      .range(['#fff0b7', '#da290f'])
+      .interpolate(d3.interpolateHcl);
+
+  var tooltip = map.append('div').attr('class', 'tooltip');
+
+  addMap(map, tooltip);
+  addLegend(map, 'Drought Severity and Coverage Index');
+
+  function addMap(parent, tooltip) {
+    var svg = map.append("svg")
+        .attr('width', width)
+        .attr('height', height);
+
+    var projection = d3.geoAlbersUsa()
+        .scale(width * 1.3) // zoom level
+        .translate([width / 2, height / 2]);
+
+    var path = d3.geoPath()
+        .projection(projection);
+
+    addCounties(svg);
+    addStates(svg);
+
+    function addCounties(parent) {
+      var idPrefix = 'county-';
+
+      parent.append("g")
+          .attr("class", "counties")
+        .selectAll("path")
+          .data(topojson.feature(us, us.objects.counties).features)
+        .enter().append("path")
+          .attr("id", function(d) { return idPrefix + d.id; })
+          .style("fill", function(d) { return logColor(logDsciById.get(d.id)); })
+          .attr("county", function(d) { var c = dataById.get(d.id); return c ? c.County : ''; })
+          .attr("state", function(d) { var c = dataById.get(d.id); return c ? c.State : ''; })
+          .attr("d", path)
+          .on("mouseover", handleMouseover)
+          .on("mouseout", handleMouseout);
+
+      function handleMouseover(d) {
+        var logDsci = logDsciById.get(d.id);
+        var dsci = Math.round(logDsciToDsci(logDsci));
+
+        d3.select("#" + idPrefix + d.id)
+          .style('fill', logColor(logDsci * 1.1))
+          .style('stroke-width', '1px');
+
+        tooltip.transition()
+          .duration(50)
+          .style('opacity', 0.8);
+        tooltip.html(dataById.get(d.id).County + "<br/>DSCI: " + dsci)
+          .style('left', (d3.event.pageX - 60) + 'px')
+          .style('top', (d3.event.pageY - 50) + 'px');
+      }
+
+      function handleMouseout(d) {
+        d3.select("#" + idPrefix + d.id)
+          .style('fill', logColor(logDsciById.get(d.id)))
+          .style('stroke-width', '0.4px');
+
+        tooltip.transition()
+          .duration(200)
+          .style('opacity', 0);
+      }
+    }
+
+    function addStates(parent) {
+      parent.append("path")
+        .datum(topojson.mesh(us, us.objects.states, function(a, b) { return a !== b; }))
+        .attr("class", "states")
+        .attr("d", path);
+    }
+  }
+
+  function addLegend(parent, title) {
+    var legend = parent.append("div")
+        .attr('class', 'legend');
+
+    var label = legend.append('span')
+        .attr('class', 'legend-label')
+        .html(title);
+
+    const scaleDim = 15,
+          keys = [1,2,3,4,5,6,7,8,9,10];
+
+    var scale = legend.append('svg')
+        .attr('width', scaleDim * keys.length)
+        .attr('height', scaleDim * 2)
+        .append('g');
+
+    scale.selectAll('rect')
+        .data(keys.map(logColor))
+        .enter()
+        .append('rect')
+          .style('fill', function(d) {return d;})
+          .attr('height', scaleDim)
+          .attr('width', scaleDim)
+          .attr('x', function(d, i) {return i * scaleDim;});
+
+    scale.selectAll('text')
+        .data([0].concat([1500]))
+        .enter()
+        .append('text')
+          .attr('x', function(d,i) {return i * 132;})
+          .attr('y', 25)
+          .text(function(d,i) {return d;});
+  }
+}
+
+function logDsci(d) {
+  return scaleFromTo(dsci(d), 0, 1500, 1, 10);
+}
+
+function logDsciToDsci(logDsci) {
+  return scaleFromTo(logDsci, 1, 10, 0, 1500);
+}
+
+function dsci(d) {
+  return (1 * d.D0 + 2 * d.D1 + 3 * d.D2 + 4 * d.D3 + 5 * d.D4);
+}
+
+function scaleFromTo(dsci, a, b, c, d) {
+  return (dsci - a) / (b - a) * (d - c) + c;
+}
+})();
+
+</script>
+</body>
